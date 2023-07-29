@@ -1,0 +1,24 @@
+.dropContainer {
+  display: flex;
+  position: absolute;
+  width: 50px;
+  height: 50px;
+}
+.dropTitle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 30px;
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background-color: #0093e9;
+  background-image: linear-gradient(160deg, #0093e9 0%, #80d0c7 100%);
+  border-radius: 30px;
+}
+#images {
+  position: absolute;
+  opacity: 0;
+  height: 100%;
+  width: 100%;
+}

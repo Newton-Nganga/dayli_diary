@@ -1,0 +1,123 @@
+import connectMongo from "../../../backend/Utils/connectMongo";
+import User from "../../../backend/models/user";
+import Journal from "../../../backend/models/journal";
+import formidable from "formidable";
+import cloudinary from "cloudinary";
+import genUid from "../../../backend/Utils/generateUID";
+import retractImg from "../event/retractImg";
+/**
+ * @param {import('next').NextApiRequest} req
+ * @param {import('next').NextApiResponse} res
+ */
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+export default async function handler(req, res) {
+  const nid = (await genUid()).valueOf();
+  const date = new Date().getTime();
+  if (req.method !== "POST") {
+    return res.status(405).json({ message: "Method not allowed" });
+  }
+  console.log("======= LETS DESTRUCTURE THE FORM DATA =======");
+  // Parse the incoming form data using formidable
+  const form = formidable({ multiples: true });
+  await new Promise((resolve, reject) => {
+    console.log("Before parsing form...");
+    form.parse(req, (err, fields, files) => {
+      if (err) {
+        reject(err);
+      }
+      resolve({ fields, files });
+    });
+    console.log("After parsing form...");
+  })
+    .then(async (formData) => {
+      if (!formData) {
+        console.log("No form data");
+      }
+      const { id, email, title, journal, journal_thumbnail } = formData.fields;
+      const eId = id + "_" + nid + "_" + date;
+      console.log("====== we got the form now =======");
+      // console.log(images)
+      //save all the images into the cloudinary cloud storage
+      //push all the images to cloudinary
+      console.log("====== PUSHING IMAGES TO CLOUDINARY ======");
+      const resp = await cloudinary.v2.uploader.upload(journal_thumbnail, {
+        folder: "dayli-uploads",
+      });
+      const imageUrl = [{ url: resp.secure_url, publicId: resp.public_id }];
+
+      console.log("***all the urls***", imageUrl);
+      //if there is cloudinary urls add event and the event_id to users events
+      console.log("====== CONNECTING TO MONGO ======");
+      await connectMongo();
+      console.log("====== CONNECTED TO MONGO ======");
+
+      //create event document
+      console.log("====== CREATING JOURNAL DOC ======");
+      await Journal.create({
+        _id: eId,
+        title: title,
+        journal: journal,
+        image_url: imageUrl, //array
+      })
+        .then(async (journal) => {
+          if (!journal) {
+            return res.status(500).json({ msg: "There is no journal created" });
+          }
+          console.log("*** Journal created successfully ***");
+          console.log(journal);
+          const addJournalIdToMyList = await User.updateOne(
+            { _id: id, "user.email": email },
+            { $push: { journals: journal._id } }, //populate the journals array with journal id
+            { returnOriginal: false }
+          );
+
+          if (
+            (addJournalIdToMyList.acknowledged !== true &&
+              addJournalIdToMyList.modifiedCount !== 1) ||
+            (addJournalIdToMyList.acknowledged === true &&
+              addJournalIdToMyList.modifiedCount !== 1)
+          ) {
+            //delete the created journal and image
+            console.log(
+              "====== Deleting the uploaded images and journal created ======"
+            );
+            await retractImg(journal.image_url);
+            //delete the journal created
+            const deleteEvt = await Journal.deleteOne({ _id: eId });
+            console.log("deleted Journal response", deleteEvt);
+          }
+          //else if images uploaded,journal created and user updated
+          console.log("====== USER DOCS UPDATED SUCCESSFULLY ======");
+          const ims = journal.image_url[0].url;
+          return res.status(201).json({
+            journal: {
+              title: journal.title,
+              images: ims,
+              journal: journal.journal,
+            },
+            msg: "The journal was completed added",
+          });
+        })
+        .catch(async (err) => {
+          console.log("====== Deleting the uploaded images ======");
+          //delete em
+          await retractImg(imageUrl);
+          return res
+            .status(500)
+            .json({ err: err, msg: "Error creating journal" });
+        }); //journal creation
+    })
+    .catch((err) => {
+      console.log(err);
+    });
+}
